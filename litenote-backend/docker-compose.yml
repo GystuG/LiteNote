@@ -1,0 +1,11 @@
+services:
+  app:
+    image: ${ACR_REGISTRY}/${ACR_NAMESPACE}/litenote-backend:latest
+    ports:
+      - "3006:3006"
+    volumes:
+      - ./uploads:/app/uploads
+      - ./public:/app/public
+    env_file:
+      - .env
+    restart: always

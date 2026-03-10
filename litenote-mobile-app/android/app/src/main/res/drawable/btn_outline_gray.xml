@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Neo-Brutalism outline button: white fill + thick stroke -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#FFFFFF" />
+    <stroke android:width="2dp" android:color="#1A1A1A" />
+    <corners android:radius="8dp" />
+</shape>

@@ -1,0 +1,108 @@
+name: Build & Release Android
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'litenote-mobile-app/**'
+  workflow_dispatch:
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # 跳过由 release.js 产生的版本提交
+    if: "!startsWith(github.event.head_commit.message, 'version:')"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: litenote-mobile-app/package-lock.json
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cache Android NDK & SDK components
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/lib/android/sdk/ndk/
+            /usr/local/lib/android/sdk/cmake/
+          key: android-ndk-26.1.10909125-27.0.12077973
+          restore-keys: android-ndk-
+          save-always: true
+
+      - name: Pre-install NDK versions
+        run: |
+          for ver in 26.1.10909125 27.0.12077973; do
+            if [ ! -d "/usr/local/lib/android/sdk/ndk/$ver" ]; then
+              echo "Installing NDK $ver..."
+              sdkmanager "ndk;$ver"
+            else
+              echo "NDK $ver restored from cache"
+            fi
+          done
+
+      - name: Setup Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.gradle/native
+          key: gradle-${{ hashFiles('litenote-mobile-app/android/gradle/wrapper/gradle-wrapper.properties', 'litenote-mobile-app/android/app/build.gradle') }}
+          restore-keys: gradle-
+          save-always: true
+
+      - name: Install dependencies
+        run: npm install
+        working-directory: litenote-mobile-app
+
+      - name: Decode release keystore
+        run: |
+          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/release.keystore
+            echo "RELEASE_KEYSTORE=true" >> $GITHUB_ENV
+          fi
+        working-directory: litenote-mobile-app
+
+      - name: Configure git for CI
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Run release (bump version + build + upload + commit)
+        run: node scripts/release.js patch --ci "CI auto release"
+        working-directory: litenote-mobile-app
+        env:
+          RELEASE_STORE_FILE: ${{ env.RELEASE_KEYSTORE == 'true' && 'release.keystore' || '' }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          GRADLE_OPTS: '-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.workers.max=4 -Dorg.gradle.caching=true -Xmx4g'
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release
+          path: litenote-mobile-app/android/app/build/outputs/apk/release/*.apk
+          retention-days: 30

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Neo-Brutalism selected chip: primary light fill + thick stroke -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#DBEAFE" />
+    <stroke android:width="2dp" android:color="#1A1A1A" />
+    <corners android:radius="8dp" />
+</shape>

@@ -1,0 +1,18 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Dependencies (root level, sub-projects have own .gitignore)
+node_modules/
+
+# Logs
+*.log
+
+# Environment (root level)
+.env.local

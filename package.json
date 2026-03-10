@@ -1,0 +1,46 @@
+{
+  "name": "litenote",
+  "private": true,
+  "description": "智能记账应用 Monorepo",
+  "scripts": {
+    "install:all": "npm --prefix litenote-backend install --legacy-peer-deps && npm --prefix litenote-mobile-app install",
+
+    "backend:build": "npm --prefix litenote-backend run build",
+    "backend:format": "npm --prefix litenote-backend run format",
+    "backend:start": "npm --prefix litenote-backend run start",
+    "backend:start:dev": "npm --prefix litenote-backend run start:dev",
+    "backend:start:debug": "npm --prefix litenote-backend run start:debug",
+    "backend:start:prod": "npm --prefix litenote-backend run start:prod",
+    "backend:lint": "npm --prefix litenote-backend run lint",
+    "backend:test": "npm --prefix litenote-backend test",
+    "backend:test:watch": "npm --prefix litenote-backend run test:watch",
+    "backend:test:cov": "npm --prefix litenote-backend run test:cov",
+    "backend:test:e2e": "npm --prefix litenote-backend run test:e2e",
+    "backend:prisma:migrate:dev": "npm --prefix litenote-backend exec -- prisma migrate dev",
+    "backend:prisma:migrate:deploy": "npm --prefix litenote-backend exec -- prisma migrate deploy",
+
+    "mobile:android": "npm --prefix litenote-mobile-app run android",
+    "mobile:android:dev": "npm --prefix litenote-mobile-app run android:dev",
+    "mobile:android:prod": "npm --prefix litenote-mobile-app run android:prod",
+    "mobile:ios": "npm --prefix litenote-mobile-app run ios",
+    "mobile:ios:dev": "npm --prefix litenote-mobile-app run ios:dev",
+    "mobile:ios:prod": "npm --prefix litenote-mobile-app run ios:prod",
+    "mobile:start": "npm --prefix litenote-mobile-app start",
+    "mobile:start:reset": "npm --prefix litenote-mobile-app run start:reset",
+    "mobile:lint": "npm --prefix litenote-mobile-app run lint",
+    "mobile:lint:fix": "npm --prefix litenote-mobile-app run lint:fix",
+    "mobile:test": "npm --prefix litenote-mobile-app test",
+    "mobile:test:watch": "npm --prefix litenote-mobile-app run test:watch",
+    "mobile:test:coverage": "npm --prefix litenote-mobile-app run test:coverage",
+    "mobile:build:dev": "npm --prefix litenote-mobile-app run build:dev",
+    "mobile:build:prod": "npm --prefix litenote-mobile-app run build:prod",
+    "mobile:clean": "npm --prefix litenote-mobile-app run clean",
+    "mobile:release": "npm --prefix litenote-mobile-app run release",
+    "mobile:release:patch": "npm --prefix litenote-mobile-app run release:patch",
+    "mobile:release:minor": "npm --prefix litenote-mobile-app run release:minor",
+    "mobile:release:major": "npm --prefix litenote-mobile-app run release:major",
+
+    "lint:all": "npm --prefix litenote-backend run lint && npm --prefix litenote-mobile-app run lint:fix",
+    "test:all": "npm --prefix litenote-backend test && npm --prefix litenote-mobile-app test"
+  }
+}

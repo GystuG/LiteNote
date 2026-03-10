@@ -1,0 +1,239 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["public"]
+}
+
+model User {
+  id          String    @id @default(uuid()) @db.Uuid // 用户唯一标识ID
+  username    String    @unique @db.VarChar(50)        // 用户名，唯一
+  password    String    @db.VarChar(255)               // 加密后的密码
+  email       String?   @unique @db.VarChar(100)       // 邮箱地址，可选，唯一
+  nickname    String?   @db.VarChar(50)                // 昵称，可选
+  avatar      String?   @db.Text                       // 头像URL，可选
+  isActive    Boolean   @default(true) @map("is_active") // 账户是否激活
+  lastLoginAt DateTime? @map("last_login_at") @db.Timestamptz(6) // 最后登录时间
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6) // 创建时间
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)      // 更新时间
+
+  // 关联关系
+  bills          Bill[]           // 用户的所有账单记录
+  categories     Category[]       // 用户的自定义分类
+  accounts       Account[]        // 用户的账户
+  budgets        Budget[]         // 用户的预算
+  financialGoals FinancialGoal[]  // 用户的财务目标
+  aiModelConfigs AIModelConfig[]  // 用户的AI模型配置
+  chatSessions   ChatSession[]    // 用户的AI聊天会话
+
+  @@map("users")
+  @@schema("public")
+}
+
+model AIModelConfig {
+  id             Int      @id @default(autoincrement())                            // 配置ID，自增主键
+  userId         String   @map("user_id") @db.Uuid                                 // 所属用户ID，必填
+  name           String   @db.VarChar(100)                                         // 显示名称，如"我的 Claude"
+  provider       String   @db.VarChar(50)                                          // 服务商: claude | openai | deepseek | qwen
+  apiKey         String   @map("api_key") @db.Text                                 // API Key（加密存储）
+  apiBaseUrl     String?  @map("api_base_url") @db.VarChar(255)                    // 自定义 API 地址（可选）
+  model          String   @db.VarChar(100)                                         // 模型名称（如 claude-sonnet-4-20250514）
+  isDefault      Boolean  @default(false) @map("is_default")                       // 是否默认
+  supportsVision Boolean  @default(false) @map("supports_vision")                  // 是否支持图片
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)   // 创建时间
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)        // 更新时间
+
+  // 关联关系
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade) // 关联用户，级联删除
+
+  @@index([userId])            // 索引：用户ID
+  @@index([userId, isDefault]) // 复合索引：用户ID + 是否默认
+  @@map("ai_model_configs")
+  @@schema("public")
+}
+
+model Category {
+  id          Int      @id @default(autoincrement())                            // 分类ID，自增主键
+  name        String   @db.VarChar(100)                                         // 分类名称，如"餐饮"、"交通"等
+  type        String   @db.VarChar(10)                                          // 分类类型：'income'(收入) 或 'expense'(支出)
+  icon        String?  @db.VarChar(10)                                          // 分类图标，emoji表情，可选
+  color       String?  @db.VarChar(20)                                          // 分类颜色，十六进制色值，可选
+  isDefault   Boolean  @default(false) @map("is_default")                       // 是否为系统默认分类
+  sortOrder   Int      @default(0) @map("sort_order")                           // 排序序号，用于分类显示顺序
+  userId      String?  @map("user_id") @db.Uuid                                 // 所属用户ID，null表示系统默认分类
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)   // 创建时间
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)        // 更新时间
+
+  // 关联关系
+  user    User?    @relation(fields: [userId], references: [id], onDelete: Cascade) // 关联用户，级联删除
+  bills   Bill[]                                                                    // 该分类下的所有账单
+  budgets Budget[]                                                                  // 该分类下的预算
+
+  @@index([userId, type])  // 复合索引：用户ID + 分类类型
+  @@index([isDefault])     // 索引：是否默认分类
+  @@map("categories")
+  @@schema("public")
+}
+
+model Bill {
+  id          Int       @id @default(autoincrement())                            // 账单ID，自增主键
+  amount      Decimal   @db.Decimal(15, 4)                                       // 金额，支持15位数字，4位小数
+  type        String    @db.VarChar(10)                                          // 账单类型：'income'(收入) 或 'expense'(支出)
+  description String?   @db.Text                                                 // 账单描述/备注，可选
+  date        DateTime  @db.Date                                                 // 账单日期
+  time        DateTime? @db.Timestamptz(6)                                       // 具体时间，可选
+  categoryId  Int?      @map("category_id")                                      // 关联分类ID，可选
+  accountId   Int?      @map("account_id")                                       // 关联账户ID，可选
+  userId      String    @map("user_id") @db.Uuid                                 // 所属用户ID，必填
+  tags        String[]  @default([])                                             // 标签数组
+  notes       String?   @db.Text                                                 // 备注，可选
+  receiptUrl  String?   @map("receipt_url") @db.Text                             // 收据图片URL，可选
+  source      String    @default("manual") @db.VarChar(20)                       // 来源：manual/voice/ocr/text/notification
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)   // 创建时间
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)        // 更新时间
+
+  // 关联关系
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)    // 关联用户，级联删除
+  category    Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull) // 关联分类，删除分类时设为null
+  account     Account?  @relation(fields: [accountId], references: [id], onDelete: SetNull)  // 关联账户，删除账户时设为null
+
+  @@index([userId, date])    // 复合索引：用户ID + 日期，用于按日期查询用户账单
+  @@index([userId, type])    // 复合索引：用户ID + 类型，用于按类型统计
+  @@index([categoryId])      // 索引：分类ID
+  @@index([accountId])       // 索引：账户ID
+  @@index([source])          // 索引：来源
+  @@map("bills")
+  @@schema("public")
+}
+
+model Account {
+  id          Int      @id @default(autoincrement())                            // 账户ID，自增主键
+  name        String   @db.VarChar(100)                                         // 账户名称
+  type        String   @db.VarChar(20)                                          // 账户类型：bank_card/e_wallet/credit_card/cash
+  balance     Decimal  @default(0) @db.Decimal(15, 4)                           // 账户余额
+  icon        String?  @db.VarChar(10)                                          // 账户图标，emoji表情，可选
+  color       String?  @db.VarChar(20)                                          // 账户颜色，十六进制色值，可选
+  isDefault   Boolean  @default(false) @map("is_default")                       // 是否为默认账户
+  sortOrder   Int      @default(0) @map("sort_order")                           // 排序序号
+  userId      String   @map("user_id") @db.Uuid                                 // 所属用户ID，必填
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)   // 创建时间
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)        // 更新时间
+
+  // 关联关系
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade) // 关联用户，级联删除
+  bills Bill[]                                                                  // 该账户下的所有账单
+
+  @@index([userId])          // 索引：用户ID
+  @@index([userId, type])    // 复合索引：用户ID + 账户类型
+  @@map("accounts")
+  @@schema("public")
+}
+
+model Budget {
+  id          Int      @id @default(autoincrement())                            // 预算ID，自增主键
+  name        String   @db.VarChar(100)                                         // 预算名称
+  amount      Decimal  @db.Decimal(15, 4)                                       // 预算金额
+  period      String   @db.VarChar(20)                                          // 预算周期：monthly/yearly
+  categoryId  Int?     @map("category_id")                                      // 关联分类ID，可选（null表示总预算）
+  alertAt     Int      @default(80)                                             // 超支提醒百分比，默认80%
+  isActive    Boolean  @default(true) @map("is_active")                         // 是否启用
+  userId      String   @map("user_id") @db.Uuid                                 // 所属用户ID，必填
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)   // 创建时间
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)        // 更新时间
+
+  // 关联关系
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)    // 关联用户，级联删除
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull) // 关联分类，删除分类时设为null
+
+  @@index([userId])          // 索引：用户ID
+  @@index([userId, period])  // 复合索引：用户ID + 周期
+  @@index([categoryId])      // 索引：分类ID
+  @@map("budgets")
+  @@schema("public")
+}
+
+model FinancialGoal {
+  id            Int       @id @default(autoincrement())                            // 目标ID，自增主键
+  name          String    @db.VarChar(100)                                         // 目标名称，如"攒首付"
+  targetAmount  Decimal   @map("target_amount") @db.Decimal(15, 4)                // 目标金额
+  currentAmount Decimal   @default(0) @map("current_amount") @db.Decimal(15, 4)   // 当前已存金额
+  deadline      DateTime? @db.Date                                                 // 截止日期，可选
+  icon          String?   @db.VarChar(10)                                          // emoji图标，可选
+  color         String?   @db.VarChar(20)                                          // 颜色，可选
+  isCompleted   Boolean   @default(false) @map("is_completed")                     // 是否已完成
+  userId        String    @map("user_id") @db.Uuid                                 // 所属用户ID，必填
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)   // 创建时间
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)        // 更新时间
+
+  // 关联关系
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade) // 关联用户，级联删除
+
+  @@index([userId])          // 索引：用户ID
+  @@map("financial_goals")
+  @@schema("public")
+}
+
+model AppVersion {
+  id          Int      @id @default(autoincrement())                            // 版本ID，自增主键
+  version     String   @unique @db.VarChar(20)                                  // 版本号，如 "1.2.3"
+  versionCode Int      @unique @map("version_code")                             // Android versionCode，如 10203
+  downloadUrl String   @map("download_url") @db.Text                            // APK 下载链接
+  updateLog   String   @map("update_log") @db.Text                              // 更新日志
+  forceUpdate Boolean  @default(false) @map("force_update")                     // 是否强制更新
+  platform    String   @default("android") @db.VarChar(20)                      // 平台：android/ios
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)   // 创建时间
+
+  @@index([platform])        // 索引：平台
+  @@map("app_versions")
+  @@schema("public")
+}
+
+model ChatSession {
+  id          Int       @id @default(autoincrement())                            // 会话ID，自增主键
+  userId      String    @map("user_id") @db.Uuid                                 // 所属用户ID
+  title       String?   @db.VarChar(200)                                         // 会话标题（自动从首条消息生成）
+  summary     String?   @db.Text                                                 // 旧消息压缩摘要
+  summaryUpTo Int?      @map("summary_up_to")                                    // 摘要覆盖到的消息序号
+  aiConfigId  Int?      @map("ai_config_id")                                     // 使用的AI配置ID
+  isActive    Boolean   @default(true) @map("is_active")                         // 是否激活（软删除）
+  isPinned    Boolean   @default(false) @map("is_pinned")                        // 是否置顶
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)   // 创建时间
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)        // 更新时间
+
+  // 关联关系
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages ChatMessage[]
+
+  @@index([userId, updatedAt])
+  @@index([userId, isActive])
+  @@map("chat_sessions")
+  @@schema("public")
+}
+
+model ChatMessage {
+  id         Int      @id @default(autoincrement())                            // 消息ID，自增主键
+  sessionId  Int      @map("session_id")                                       // 所属会话ID
+  seqNum     Int      @map("seq_num")                                          // 会话内序号，用于排序
+  role       String   @db.VarChar(20)                                          // 角色：system | user | assistant | tool
+  content    String?  @db.Text                                                 // 文本内容
+  toolCalls  Json?    @map("tool_calls")                                       // AI发起的工具调用 [{id, name, arguments}]
+  toolCallId String?  @map("tool_call_id") @db.VarChar(100)                    // 工具调用ID（tool角色消息）
+  toolName   String?  @map("tool_name") @db.VarChar(50)                        // 工具名称（tool角色消息）
+  toolResult Json?    @map("tool_result")                                      // 工具执行结果（tool角色消息）
+  imageUrl   String?  @map("image_url") @db.Text                              // 图片Base64或URL
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)   // 创建时间
+
+  // 关联关系
+  session ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, seqNum])
+  @@index([sessionId])
+  @@map("chat_messages")
+  @@schema("public")
+}

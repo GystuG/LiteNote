@@ -1,0 +1,13 @@
+node_modules
+dist
+.git
+.env
+.env.*
+*.md
+.workflow
+.eslintrc.js
+.prettierrc
+test
+coverage
+uploads
+public

@@ -1,0 +1,281 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Neo-Brutalism 快速记账弹窗 -->
+<FrameLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#99000000">
+
+    <!-- Neo-Brutalism 卡片: 粗描边 + 实心偏移阴影 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="24dp"
+        android:layout_marginBottom="4dp"
+        android:layout_gravity="center"
+        android:orientation="vertical"
+        android:background="@drawable/bg_card_neo"
+        android:clipToPadding="false">
+
+        <!-- 主内容区域 -->
+        <LinearLayout
+            android:id="@+id/content_main"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="20dp"
+            android:paddingTop="20dp"
+            android:paddingEnd="24dp"
+            android:paddingBottom="24dp">
+
+            <!-- 标题栏 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="💰 快速记账"
+                    android:textSize="20sp"
+                    android:textColor="#1A1A1A"
+                    android:textStyle="bold" />
+
+                <!-- Neo-Brutalism 关闭按钮: 黄色方块 + 描边 -->
+                <ImageButton
+                    android:id="@+id/btn_close_x"
+                    android:layout_width="34dp"
+                    android:layout_height="34dp"
+                    android:background="@drawable/bg_close_btn_neo"
+                    android:src="@android:drawable/ic_menu_close_clear_cancel"
+                    android:contentDescription="关闭"
+                    android:scaleType="centerInside"
+                    android:padding="6dp" />
+            </LinearLayout>
+
+            <!-- 来源提示: 黄色 accent 色块 + 描边 -->
+            <TextView
+                android:id="@+id/tv_source"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="检测到 微信支付 消费"
+                android:textSize="14sp"
+                android:textColor="#1A1A1A"
+                android:textStyle="bold"
+                android:background="@drawable/bg_source_banner"
+                android:padding="12dp"
+                android:gravity="center" />
+
+            <!-- 金额显示: 等宽字体 + 粗体 -->
+            <TextView
+                android:id="@+id/tv_amount"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:text="¥ 0.00"
+                android:textSize="40sp"
+                android:textColor="#EF4444"
+                android:textStyle="bold"
+                android:fontFamily="monospace"
+                android:gravity="center" />
+
+            <!-- 分类选择标签 -->
+            <TextView
+                android:id="@+id/tv_category_label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:text="选择分类"
+                android:textSize="14sp"
+                android:textColor="#1A1A1A"
+                android:textStyle="bold" />
+
+            <!-- 分类网格区域: 每行3个, 纵向滚动 -->
+            <ScrollView
+                android:id="@+id/scroll_categories"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:scrollbars="none"
+                android:overScrollMode="never">
+
+                <LinearLayout
+                    android:id="@+id/container_categories"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+            </ScrollView>
+
+            <!-- 加载状态 -->
+            <LinearLayout
+                android:id="@+id/loading_container"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center"
+                android:visibility="gone">
+
+                <ProgressBar
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:indeterminate="true" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:text="加载分类中..."
+                    android:textSize="13sp"
+                    android:textColor="#737373"
+                    android:fontFamily="monospace" />
+            </LinearLayout>
+
+            <!-- 按钮区域 -->
+            <LinearLayout
+                android:id="@+id/buttons_container"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:orientation="horizontal">
+
+                <!-- 取消按钮: 白底 + 粗描边 -->
+                <Button
+                    android:id="@+id/btn_close"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="10dp"
+                    android:text="取消"
+                    android:textSize="15sp"
+                    android:textColor="#1A1A1A"
+                    android:textStyle="bold"
+                    android:background="@drawable/btn_outline_gray"
+                    android:textAllCaps="false" />
+
+                <!-- 记账按钮: 蓝色填充 + 粗描边 -->
+                <Button
+                    android:id="@+id/btn_confirm"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:layout_marginStart="10dp"
+                    android:text="记账"
+                    android:textSize="15sp"
+                    android:textColor="#FFFFFF"
+                    android:textStyle="bold"
+                    android:background="@drawable/btn_primary"
+                    android:enabled="false"
+                    android:alpha="0.5"
+                    android:textAllCaps="false" />
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- 成功反馈区域 -->
+        <LinearLayout
+            android:id="@+id/content_success"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="24dp"
+            android:paddingVertical="40dp"
+            android:gravity="center"
+            android:visibility="gone">
+
+            <!-- 成功图标: 绿底色块 -->
+            <TextView
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:text="✓"
+                android:textSize="32sp"
+                android:textColor="#22C55E"
+                android:textStyle="bold"
+                android:gravity="center"
+                android:background="@drawable/bg_success_neo" />
+
+            <TextView
+                android:id="@+id/tv_success_message"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="记账成功"
+                android:textSize="20sp"
+                android:textColor="#1A1A1A"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_success_detail"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="¥0.00 - 分类"
+                android:textSize="15sp"
+                android:textColor="#404040"
+                android:fontFamily="monospace"
+                android:textStyle="bold" />
+
+        </LinearLayout>
+
+        <!-- 失败反馈区域 -->
+        <LinearLayout
+            android:id="@+id/content_error"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="24dp"
+            android:paddingVertical="40dp"
+            android:gravity="center"
+            android:visibility="gone">
+
+            <!-- 失败图标: 红底色块 -->
+            <TextView
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:text="✗"
+                android:textSize="32sp"
+                android:textColor="#EF4444"
+                android:textStyle="bold"
+                android:gravity="center"
+                android:background="@drawable/bg_error_neo" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="记账失败"
+                android:textSize="20sp"
+                android:textColor="#1A1A1A"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_error_message"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="请稍后重试"
+                android:textSize="14sp"
+                android:textColor="#404040" />
+
+            <!-- 重试按钮 -->
+            <Button
+                android:id="@+id/btn_retry"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:layout_marginTop="20dp"
+                android:paddingHorizontal="32dp"
+                android:text="重试"
+                android:textSize="15sp"
+                android:textColor="#FFFFFF"
+                android:textStyle="bold"
+                android:background="@drawable/btn_primary"
+                android:textAllCaps="false" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</FrameLayout>
