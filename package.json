@@ -16,8 +16,9 @@
     "backend:test:watch": "npm --prefix litenote-backend run test:watch",
     "backend:test:cov": "npm --prefix litenote-backend run test:cov",
     "backend:test:e2e": "npm --prefix litenote-backend run test:e2e",
-    "backend:prisma:migrate:dev": "npm --prefix litenote-backend exec -- prisma migrate dev",
-    "backend:prisma:migrate:deploy": "npm --prefix litenote-backend exec -- prisma migrate deploy",
+    "backend:prisma:generate": "cd litenote-backend && npx prisma generate",
+    "backend:prisma:migrate:dev": "cd litenote-backend && npx prisma migrate dev",
+    "backend:prisma:migrate:deploy": "cd litenote-backend && npx prisma migrate deploy",
 
     "mobile:android": "npm --prefix litenote-mobile-app run android",
     "mobile:android:dev": "npm --prefix litenote-mobile-app run android:dev",
