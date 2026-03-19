@@ -23,7 +23,11 @@
     "release": "node scripts/release.js patch",
     "release:patch": "node scripts/release.js patch",
     "release:minor": "node scripts/release.js minor",
-    "release:major": "node scripts/release.js major"
+    "release:major": "node scripts/release.js major",
+    "hot-update": "node scripts/release-bundle.js",
+    "hot-update:dev": "node scripts/release-bundle.js --dev",
+    "hot-update:force": "node scripts/release-bundle.js --force",
+    "hot-update:dev:force": "node scripts/release-bundle.js --dev --force"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^2.2.0",
@@ -35,6 +39,7 @@
     "@sentry/react-native": "^7.10.0",
     "@tanstack/react-query": "^5.90.19",
     "axios": "^1.12.2",
+    "litenote": "file:..",
     "lucide-react-native": "^0.563.0",
     "mobx": "^6.15.0",
     "mobx-react-lite": "^4.1.1",
@@ -56,7 +61,8 @@
     "react-native-skeleton-placeholder": "^5.2.4",
     "react-native-sse": "^1.2.1",
     "react-native-svg": "^15.15.1",
-    "react-native-vector-icons": "^10.3.0"
+    "react-native-vector-icons": "^10.3.0",
+    "react-native-zip-archive": "^7.0.2"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
@@ -72,6 +78,7 @@
     "@types/jest": "^29.5.13",
     "@types/react": "^19.1.0",
     "@types/react-test-renderer": "^19.1.0",
+    "adm-zip": "^0.5.16",
     "apisauce": "^3.2.1",
     "cross-env": "^10.1.0",
     "eslint": "^8.19.0",

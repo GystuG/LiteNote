@@ -81,3 +81,6 @@ yarn-error.log
 # IDE
 .vscode/
 .idea/
+
+# Hot Update 构建产物
+bundle-output/

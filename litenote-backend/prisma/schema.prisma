@@ -216,6 +216,33 @@ model ChatSession {
   @@schema("public")
 }
 
+model HotUpdate {
+  id               Int      @id @default(autoincrement())
+  bundleVersion    Int      @unique @map("bundle_version")
+  targetVersion    String   @map("target_version") @db.VarChar(20)    // 对应的 nativeVersion
+  minNativeCode    Int      @map("min_native_code")                   // 最低兼容原生版本码
+  maxNativeCode    Int?     @map("max_native_code")                   // 最高兼容原生版本码
+  bundleType       String   @default("business") @map("bundle_type") @db.VarChar(20) // full | business
+  downloadUrl      String   @map("download_url") @db.Text             // 完整包下载链接
+  fileHash         String   @map("file_hash") @db.VarChar(64)         // 完整包 SHA256
+  fileSize         Int      @map("file_size")                          // 完整包大小 (bytes)
+  // bsdiff 补丁字段
+  patchFromVersion Int?     @map("patch_from_version")                 // 基于哪个版本的 diff
+  patchUrl         String?  @map("patch_url") @db.Text                 // diff 补丁下载链接
+  patchHash        String?  @map("patch_hash") @db.VarChar(64)         // 补丁 SHA256
+  patchSize        Int?     @map("patch_size")                         // 补丁大小 (bytes)
+  // 元数据
+  updateLog        String   @map("update_log") @db.Text
+  forceUpdate      Boolean  @default(false) @map("force_update")
+  isActive         Boolean  @default(true) @map("is_active")
+  platform         String   @default("android") @db.VarChar(20)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([platform, isActive])
+  @@map("hot_updates")
+  @@schema("public")
+}
+
 model ChatMessage {
   id         Int      @id @default(autoincrement())                            // 消息ID，自增主键
   sessionId  Int      @map("session_id")                                       // 所属会话ID

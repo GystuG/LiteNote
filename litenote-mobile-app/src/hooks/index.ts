@@ -10,3 +10,4 @@ export { useStatistics, getDateRange, getPreviousDateRange } from './useStatisti
 export { useCategories } from './useCategories';
 export { useAppUpdate } from './useAppUpdate';
 export { useStyles, useThemedStyles } from './useStyles';
+export { useHotUpdate } from './useHotUpdate';

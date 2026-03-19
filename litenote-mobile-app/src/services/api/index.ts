@@ -9,3 +9,4 @@ export * from './accounts';
 export * from './budgets';
 export * from './appVersion';
 export * from './ai';
+export * from './hotUpdate';

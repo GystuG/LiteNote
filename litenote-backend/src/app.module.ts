@@ -14,6 +14,7 @@ import { BudgetsModule } from './budgets/budgets.module';
 import { FinancialGoalsModule } from './financial-goals/financial-goals.module';
 import { AppVersionModule } from './app-version/app-version.module';
 import { AIModule } from './ai/ai.module';
+import { HotUpdateModule } from './hot-update/hot-update.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { AIModule } from './ai/ai.module';
     FinancialGoalsModule,
     AppVersionModule,
     AIModule,
+    HotUpdateModule,
   ],
   controllers: [AppController],
   providers: [

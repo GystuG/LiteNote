@@ -116,3 +116,6 @@ prisma/migrations/
 # Database
 *.sqlite
 *.db
+
+# 热更新 bundle 上传文件
+public/downloads/bundles/
