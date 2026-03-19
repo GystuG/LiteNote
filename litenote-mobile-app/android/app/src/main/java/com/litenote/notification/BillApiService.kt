@@ -131,7 +131,7 @@ class BillApiService(private val context: Context) {
     fun createBill(
         amount: Double,
         categoryId: Int,
-        description: String,
+        description: String?,
         callback: (Boolean, String?) -> Unit
     ) {
         val url = "${getBaseUrl()}/bills"

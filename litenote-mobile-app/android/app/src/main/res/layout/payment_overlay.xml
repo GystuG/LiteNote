@@ -95,11 +95,30 @@
                 android:textStyle="bold" />
 
             <!-- 分类网格区域: 每行3个, 纵向滚动 -->
+            <EditText
+                android:id="@+id/et_remark"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:minHeight="44dp"
+                android:background="@drawable/btn_outline_gray"
+                android:gravity="top|start"
+                android:hint="添加备注（可选）"
+                android:importantForAutofill="no"
+                android:inputType="textMultiLine|textCapSentences"
+                android:maxLines="3"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="10dp"
+                android:textColor="#1A1A1A"
+                android:textColorHint="#737373"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
             <ScrollView
                 android:id="@+id/scroll_categories"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
+                android:layout_marginTop="14dp"
                 android:scrollbars="none"
                 android:overScrollMode="never">
 

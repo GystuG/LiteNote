@@ -16,6 +16,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
+import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -320,6 +321,7 @@ class PaymentOverlayManager(private val context: Context) {
 
         // 获取确认按钮引用
         val confirmButton = view.findViewById<Button>(R.id.btn_confirm)
+        val remarkInput = view.findViewById<EditText>(R.id.et_remark)
 
         // 记账按钮
         confirmButton.setOnClickListener {
@@ -336,10 +338,11 @@ class PaymentOverlayManager(private val context: Context) {
             confirmButton.text = "记账中..."
 
             // 调用 API 创建账单
+            val remark = remarkInput.text?.toString()?.trim().orEmpty().ifBlank { null }
             apiService.createBill(
                 amount = amount,
                 categoryId = category.id,
-                description = sourceName
+                description = remark
             ) { success, errorMessage ->
                 mainHandler.post {
                     if (success) {
@@ -390,6 +393,7 @@ class PaymentOverlayManager(private val context: Context) {
         val categoriesContainer = view.findViewById<LinearLayout>(R.id.container_categories)
         val scrollView = view.findViewById<View>(R.id.scroll_categories)
         val confirmButton = view.findViewById<Button>(R.id.btn_confirm)
+        categoriesContainer.removeAllViews()
 
         // 显示加载状态
         loadingContainer.visibility = View.VISIBLE
@@ -556,13 +560,13 @@ class PaymentOverlayManager(private val context: Context) {
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             layoutType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
                     WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.CENTER
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
         }
     }
 
