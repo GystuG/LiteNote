@@ -13,6 +13,12 @@ export interface ApiResponse<T = any> {
 
 // 分页响应类型
 export interface PaginatedResponse<T> extends ApiResponse<T[]> {
+  monthlySummary?: Array<{
+    month: string;
+    income: number;
+    expense: number;
+    net: number;
+  }>;
   pagination: {
     page: number;
     limit: number;

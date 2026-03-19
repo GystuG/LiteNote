@@ -21,6 +21,13 @@ import { spacing, borderRadius, borderWidth } from '../../theme';
 import { getCurrentMonthRange, getLastMonthRange, formatMonthDisplay } from '../../utils/date';
 import type { BillData } from '../../types/bill';
 
+type MonthSummary = {
+  month: string;
+  income: number;
+  expense: number;
+  net: number;
+};
+
 const AllBillsScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const route = useRoute();
@@ -29,48 +36,56 @@ const AllBillsScreen: React.FC = () => {
 
   const routeParams = route.params as { initialFilter?: 'all' | 'income' | 'expense' } | undefined;
 
-  const [bills, setBills] = useState<BillData[]>([]);
   const [groupedBills, setGroupedBills] = useState<{ [key: string]: BillData[] }>({});
+  const [monthlySummary, setMonthlySummary] = useState<Record<string, MonthSummary>>({});
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<'all' | 'income' | 'expense'>(routeParams?.initialFilter || 'all');
   const [timeRange, setTimeRange] = useState<'all' | 'month' | 'lastMonth' | 'custom'>('all');
 
-  const fetchBills = async (isRefresh = false) => {
-    try {
-      if (isRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
+  const fetchBills = useCallback(
+    async (isRefresh = false) => {
+      try {
+        if (isRefresh) {
+          setRefreshing(true);
+        } else {
+          setLoading(true);
+        }
 
-      const params: any = {};
-      if (filter !== 'all') {
-        params.type = filter;
-      }
+        const params: any = {};
+        if (filter !== 'all') {
+          params.type = filter;
+        }
 
-      if (timeRange === 'month') {
-        const dateRange = getCurrentMonthRange();
-        params.startDate = dateRange.startDate;
-        params.endDate = dateRange.endDate;
-      } else if (timeRange === 'lastMonth') {
-        const dateRange = getLastMonthRange();
-        params.startDate = dateRange.startDate;
-        params.endDate = dateRange.endDate;
-      }
+        if (timeRange === 'month') {
+          const dateRange = getCurrentMonthRange();
+          params.startDate = dateRange.startDate;
+          params.endDate = dateRange.endDate;
+        } else if (timeRange === 'lastMonth') {
+          const dateRange = getLastMonthRange();
+          params.startDate = dateRange.startDate;
+          params.endDate = dateRange.endDate;
+        }
 
-      const response = await billsService.getBills(params);
-      if (response.success && response.data) {
-        setBills(response.data);
-        groupBillsByMonth(response.data);
+        const response = await billsService.getBills(params);
+        if (response.success && response.data) {
+          groupBillsByMonth(response.data);
+          setMonthlySummary(
+            (response.monthlySummary || []).reduce<Record<string, MonthSummary>>((acc, item) => {
+              acc[item.month] = item;
+              return acc;
+            }, {})
+          );
+        }
+      } catch (error: any) {
+        showError(error.message || '加载账单失败');
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-    } catch (error: any) {
-      showError(error.message || '加载账单失败');
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  };
+    },
+    [filter, timeRange, showError]
+  );
 
   const groupBillsByMonth = (billList: BillData[]) => {
     const grouped: { [key: string]: BillData[] } = {};
@@ -91,10 +106,20 @@ const AllBillsScreen: React.FC = () => {
     }, 0);
   };
 
+  const getMonthSummary = (monthBills: BillData[]) => {
+    if (monthBills.length === 0) {
+      return undefined;
+    }
+
+    const date = new Date(monthBills[0].date);
+    const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    return monthlySummary[monthKey];
+  };
+
   useFocusEffect(
     useCallback(() => {
       fetchBills();
-    }, [filter, timeRange])
+    }, [fetchBills])
   );
 
   const handleBillPress = (bill: BillData) => {
@@ -160,37 +185,42 @@ const AllBillsScreen: React.FC = () => {
             <Text style={styles.emptyText}>暂无账单记录</Text>
           </View>
         ) : (
-          Object.entries(groupedBills).map(([month, monthBills]) => (
-            <View key={month} style={styles.monthSection}>
-              <View style={styles.monthHeader}>
-                <Text style={styles.monthTitle}>{month}</Text>
-                <Text style={[
-                  styles.monthTotal,
-                  { color: calculateMonthTotal(monthBills) >= 0 ? styles._colors.income : styles._colors.expense }
-                ]}>
-                  ¥{Math.abs(calculateMonthTotal(monthBills)).toFixed(2)}
-                </Text>
-              </View>
+          Object.entries(groupedBills).map(([month, monthBills]) => {
+            const summary = getMonthSummary(monthBills);
+            const monthTotal = summary?.net ?? calculateMonthTotal(monthBills);
 
-              <View style={styles.billList}>
-                {monthBills.map(bill => (
-                  <BillItem
-                    key={bill.id}
-                    bill={{
-                      id: bill.id.toString(),
-                      category: bill.category?.name || '未分类',
-                      amount: bill.amount,
-                      type: bill.type,
-                      date: `${new Date(bill.date).toLocaleDateString('zh-CN')} ${new Date(bill.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}`,
-                      description: bill.description,
-                      icon: bill.category?.icon || '📝',
-                    }}
-                    onPress={() => handleBillPress(bill)}
-                  />
-                ))}
+            return (
+              <View key={month} style={styles.monthSection}>
+                <View style={styles.monthHeader}>
+                  <Text style={styles.monthTitle}>{month}</Text>
+                  <Text style={[
+                    styles.monthTotal,
+                    { color: monthTotal >= 0 ? styles._colors.income : styles._colors.expense }
+                  ]}>
+                    ¥{Math.abs(monthTotal).toFixed(2)}
+                  </Text>
+                </View>
+
+                <View style={styles.billList}>
+                  {monthBills.map(bill => (
+                    <BillItem
+                      key={bill.id}
+                      bill={{
+                        id: bill.id.toString(),
+                        category: bill.category?.name || '未分类',
+                        amount: bill.amount,
+                        type: bill.type,
+                        date: `${new Date(bill.date).toLocaleDateString('zh-CN')} ${new Date(bill.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}`,
+                        description: bill.description,
+                        icon: bill.category?.icon || '📝',
+                      }}
+                      onPress={() => handleBillPress(bill)}
+                    />
+                  ))}
+                </View>
               </View>
-            </View>
-          ))
+            );
+          })
         )}
       </ScrollView>
     </View>

@@ -19,6 +19,24 @@ export class BillsService {
 
   constructor(private prisma: PrismaService) {}
 
+  private buildDateRange(startDate?: string, endDate?: string) {
+    if (!startDate && !endDate) {
+      return undefined;
+    }
+
+    const dateRange: { gte?: Date; lte?: Date } = {};
+
+    if (startDate) {
+      dateRange.gte = new Date(`${startDate}T00:00:00.000`);
+    }
+
+    if (endDate) {
+      dateRange.lte = new Date(`${endDate}T23:59:59.999`);
+    }
+
+    return dateRange;
+  }
+
   /**
    * 创建账单
    */
@@ -91,17 +109,12 @@ export class BillsService {
       where.categoryId = categoryId;
     }
 
-    if (startDate || endDate) {
-      where.date = {};
-      if (startDate) {
-        where.date.gte = new Date(startDate);
-      }
-      if (endDate) {
-        where.date.lte = new Date(endDate);
-      }
+    const dateRange = this.buildDateRange(startDate, endDate);
+    if (dateRange) {
+      where.date = dateRange;
     }
 
-    const [bills, total] = await Promise.all([
+    const [bills, total, summaryBills] = await Promise.all([
       this.prisma.bill.findMany({
         where,
         include: {
@@ -114,10 +127,47 @@ export class BillsService {
         take: limit,
       }),
       this.prisma.bill.count({ where }),
+      this.prisma.bill.findMany({
+        where,
+        select: {
+          date: true,
+          type: true,
+          amount: true,
+        },
+      }),
     ]);
+
+    const monthlySummaryMap = new Map<string, { income: number; expense: number; net: number }>();
+
+    summaryBills.forEach((bill) => {
+      const date = new Date(bill.date);
+      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      const existing = monthlySummaryMap.get(monthKey) || { income: 0, expense: 0, net: 0 };
+      const amount = bill.amount.toNumber();
+
+      if (bill.type === 'income') {
+        existing.income += amount;
+        existing.net += amount;
+      } else {
+        existing.expense += amount;
+        existing.net -= amount;
+      }
+
+      monthlySummaryMap.set(monthKey, existing);
+    });
+
+    const monthlySummary = Array.from(monthlySummaryMap.entries())
+      .sort(([monthA], [monthB]) => monthB.localeCompare(monthA))
+      .map(([month, summary]) => ({
+        month,
+        income: summary.income,
+        expense: summary.expense,
+        net: summary.net,
+      }));
 
     return {
       data: bills,
+      monthlySummary,
       pagination: {
         page,
         limit,
@@ -202,14 +252,9 @@ export class BillsService {
 
     const where: any = { userId };
 
-    if (startDate || endDate) {
-      where.date = {};
-      if (startDate) {
-        where.date.gte = new Date(startDate);
-      }
-      if (endDate) {
-        where.date.lte = new Date(endDate);
-      }
+    const dateRange = this.buildDateRange(startDate, endDate);
+    if (dateRange) {
+      where.date = dateRange;
     }
 
     this.logger.log(`[getStatistics] 查询条件: ${JSON.stringify(where)}`);
