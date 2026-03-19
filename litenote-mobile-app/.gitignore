@@ -74,8 +74,9 @@ yarn-error.log
 !.yarn/sdks
 !.yarn/versions
 
-# Environment files (keep our .env files but ignore local overrides)
+# Environment files
 .env.local
+.env.production
 
 # IDE
 .vscode/
