@@ -1,18 +1,13 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { generateText, streamText, ModelMessage, LanguageModel, stepCountIs } from 'ai';
 import { AIConfigService } from '../ai-config.service';
 import { SessionService } from './session.service';
 import { ToolExecutorService } from './tool-executor.service';
 import { CategoriesService } from '../../categories/categories.service';
-import {
-  AIAdapter,
-  ClaudeAdapter,
-  OpenAIAdapter,
-  DeepSeekAdapter,
-  QwenAdapter,
-} from '../adapters';
-import { ChatMessage, ContentBlock, StreamEvent } from '../types/chat.types';
-import { TOOL_DEFINITIONS } from '../tools/tool-definitions';
-import { ChatRequestDto, ChatResponseDto, ToolResultDto } from '../dto/chat.dto';
+import { AIProviderFactory } from '../providers/ai-provider.factory';
+import { createAccountingTools } from '../tools/accounting-tools';
+import { StreamEvent } from '../types/chat.types';
+import { ChatRequestDto } from '../dto/chat.dto';
 
 /** 触发摘要压缩的消息数阈值 */
 const MESSAGE_THRESHOLD = 20;
@@ -24,176 +19,14 @@ const MAX_TOOL_ROUNDS = 5;
 @Injectable()
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
-  private readonly adapters: Map<string, AIAdapter>;
 
   constructor(
     private readonly configService: AIConfigService,
     private readonly sessionService: SessionService,
     private readonly toolExecutor: ToolExecutorService,
     private readonly categoriesService: CategoriesService,
-    private readonly claudeAdapter: ClaudeAdapter,
-    private readonly openaiAdapter: OpenAIAdapter,
-    private readonly deepseekAdapter: DeepSeekAdapter,
-    private readonly qwenAdapter: QwenAdapter,
-  ) {
-    this.adapters = new Map<string, AIAdapter>([
-      ['claude', this.claudeAdapter],
-      ['openai', this.openaiAdapter],
-      ['deepseek', this.deepseekAdapter],
-      ['qwen', this.qwenAdapter],
-    ]);
-  }
-
-  /**
-   * 核心聊天方法
-   */
-  async chat(userId: string, dto: ChatRequestDto): Promise<ChatResponseDto> {
-    // 1. 获取或创建会话
-    let sessionId = dto.sessionId;
-    let isNewSession = false;
-    if (!sessionId) {
-      const session = await this.sessionService.createSession(
-        userId,
-        dto.configId,
-      );
-      sessionId = session.id;
-      isNewSession = true;
-    } else {
-      // 校验会话归属
-      await this.sessionService.getSession(userId, sessionId);
-    }
-
-    // 2. 获取 AI 配置 + 适配器
-    const { adapter, config } = await this.getAdapterAndConfig(
-      userId,
-      dto.configId,
-      sessionId,
-    );
-
-    // 3. 保存用户消息
-    const userSeqNum = await this.sessionService.getNextSeqNum(sessionId);
-    const userMessageData: any = {
-      role: 'user',
-      content: dto.content,
-    };
-    const images = dto.imageBase64List?.length
-      ? dto.imageBase64List
-      : dto.imageBase64
-        ? [dto.imageBase64]
-        : [];
-    if (images.length > 0) {
-      userMessageData.imageUrl = JSON.stringify(images);
-    }
-    await this.sessionService.saveMessage(sessionId, userSeqNum, userMessageData);
-
-    // 4. 首条消息时自动生成标题（异步，不阻塞）
-    if (isNewSession) {
-      this.generateTitle(sessionId, dto.content, adapter, config).catch(
-        (err) => this.logger.warn(`生成标题失败: ${err.message}`),
-      );
-    }
-
-    // 5. 构建上下文
-    const contextMessages = await this.buildContextMessages(
-      userId,
-      sessionId,
-    );
-
-    // 6. 工具循环
-    const allToolResults: ToolResultDto[] = [];
-    let assistantContent = '';
-    let messages = [...contextMessages];
-
-    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      this.logger.log(`工具循环第 ${round + 1} 轮 - session ${sessionId}`);
-
-      const response = await adapter.chat(messages, TOOL_DEFINITIONS, {
-        apiKey: config.apiKey,
-        apiBaseUrl: config.apiBaseUrl,
-        model: config.model,
-      });
-
-      if (response.usage) {
-        this.logger.debug(
-          `Token 用量: input=${response.usage.inputTokens}, output=${response.usage.outputTokens}`,
-        );
-      }
-
-      if (response.stopReason === 'tool_use' && response.toolCalls.length > 0) {
-        // 保存 assistant 消息（含 toolCalls）
-        const assistantSeq = await this.sessionService.getNextSeqNum(sessionId);
-        await this.sessionService.saveMessage(sessionId, assistantSeq, {
-          role: 'assistant',
-          content: response.content || undefined,
-          toolCalls: response.toolCalls,
-        });
-
-        // 追加 assistant 消息到上下文
-        messages.push({
-          role: 'assistant',
-          content: response.content || undefined,
-          toolCalls: response.toolCalls,
-        });
-
-        // 执行每个工具调用
-        for (const toolCall of response.toolCalls) {
-          const toolResult = await this.toolExecutor.executeTool(
-            userId,
-            toolCall.name,
-            toolCall.arguments,
-          );
-
-          // 保存 tool 消息
-          const toolSeq = await this.sessionService.getNextSeqNum(sessionId);
-          await this.sessionService.saveMessage(sessionId, toolSeq, {
-            role: 'tool',
-            toolCallId: toolCall.id,
-            toolName: toolCall.name,
-            toolResult: toolResult,
-          });
-
-          // 追加到上下文
-          messages.push({
-            role: 'tool',
-            toolCallId: toolCall.id,
-            toolName: toolCall.name,
-            toolResult: toolResult,
-          });
-
-          // 收集工具结果
-          allToolResults.push({
-            toolCallId: toolCall.id,
-            toolName: toolCall.name,
-            result: toolResult,
-          });
-        }
-
-        // 继续循环，让 AI 处理工具结果
-        continue;
-      }
-
-      // end_turn 或 max_tokens：保存最终 assistant 消息并退出
-      assistantContent = response.content || '';
-      const finalSeq = await this.sessionService.getNextSeqNum(sessionId);
-      await this.sessionService.saveMessage(sessionId, finalSeq, {
-        role: 'assistant',
-        content: assistantContent,
-      });
-      break;
-    }
-
-    // 7. 异步检查是否需要摘要压缩
-    this.checkAndCompress(userId, sessionId, adapter, config).catch((err) =>
-      this.logger.warn(`摘要压缩失败: ${err.message}`),
-    );
-
-    // 8. 返回结果
-    return {
-      sessionId,
-      content: assistantContent,
-      toolResults: allToolResults,
-    };
-  }
+    private readonly providerFactory: AIProviderFactory,
+  ) {}
 
   /**
    * 流式聊天方法 — 逐步 yield StreamEvent
@@ -201,232 +34,135 @@ export class ChatService {
   async *chatStream(
     userId: string,
     dto: ChatRequestDto,
+    abortSignal?: AbortSignal,
   ): AsyncGenerator<StreamEvent, void, undefined> {
     const startTime = Date.now();
 
-    // 1. 获取或创建会话
-    let sessionId = dto.sessionId;
-    let isNewSession = false;
-    let session: any;
-    if (!sessionId) {
-      session = await this.sessionService.createSession(
-        userId,
-        dto.configId,
-      );
-      sessionId = session.id;
-      isNewSession = true;
-    } else {
-      session = await this.sessionService.getSession(userId, sessionId);
-    }
+    // 1. 会话预处理 + 保存用户消息
+    const { sessionId, isNewSession, model, config } =
+      await this.prepareChat(userId, dto);
 
     // ★ 立即通知前端，消除"连接中..."等待
     yield { event: 'session_created', data: { sessionId } };
     yield { event: 'thinking', data: { round: 1 } };
 
-    // 2. 并行: 获取 AI 配置 + 消息序号
-    const [{ adapter, config }, userSeqNum] = await Promise.all([
-      this.getAdapterAndConfig(userId, dto.configId, session),
-      this.sessionService.getNextSeqNum(sessionId),
-    ]);
+    // 2. 构建上下文
+    const messages = await this.buildContextMessages(userId, sessionId);
 
-    // 3. 构建用户消息数据
-    const userMessageData: any = {
-      role: 'user',
-      content: dto.content,
-    };
-    const images = dto.imageBase64List?.length
-      ? dto.imageBase64List
-      : dto.imageBase64
-        ? [dto.imageBase64]
-        : [];
-    if (images.length > 0) {
-      userMessageData.imageUrl = JSON.stringify(images);
-    }
+    // 3. 使用 AI SDK streamText + stopWhen 进行流式 agent loop
+    let currentRound = 1;
+    const tools = createAccountingTools(userId, this.toolExecutor);
 
-    // 4. 保存用户消息（必须在构建上下文之前完成，否则上下文中缺少当前消息）
-    await this.sessionService.saveMessage(sessionId, userSeqNum, userMessageData);
+    // 判断是否为 DeepSeek reasoner 模型，需要特殊处理 reasoning_content
+    const isReasonerModel = config.model?.includes('reasoner');
 
-    // 5. 构建上下文（此时用户消息已入库，会被包含在上下文中）
-    const contextMessages = await this.buildContextMessages(userId, sessionId, session);
+    const result = streamText({
+      model,
+      messages,
+      tools,
+      stopWhen: stepCountIs(MAX_TOOL_ROUNDS),
+      abortSignal,
+      // DeepSeek reasoner 的 reasoning_content 不被 AI SDK chat 模式原生支持，
+      // 需要通过 raw chunk 手动提取
+      includeRawChunks: isReasonerModel,
+    });
 
-    // 5. 流式工具循环
-    let messages = [...contextMessages];
-
-    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      this.logger.log(`流式工具循环第 ${round + 1} 轮 - session ${sessionId}`);
-
-      // 第 1 轮已在上面提前发送 thinking，第 2 轮起在此发送
-      if (round > 0) {
-        yield { event: 'thinking', data: { round: round + 1 } };
-      }
-
-      // 调用适配器流式接口
-      let accumulatedText = '';
-      const toolCallBuffers = new Map<
-        string,
-        { name: string; argumentsJson: string }
-      >();
-      let stopReason: 'end_turn' | 'tool_use' | 'max_tokens' = 'end_turn';
-
-      for await (const event of adapter.chatStream(
-        messages,
-        TOOL_DEFINITIONS,
-        {
-          apiKey: config.apiKey,
-          apiBaseUrl: config.apiBaseUrl,
-          model: config.model,
-        },
-      )) {
-        switch (event.type) {
-          case 'text_delta':
-            accumulatedText += event.content || '';
+    // 4. 消费 fullStream，映射为客户端 SSE 事件
+    try {
+      for await (const part of result.fullStream) {
+        switch (part.type) {
+          case 'text-delta':
             yield {
               event: 'text_delta',
-              data: { content: event.content || '' },
+              data: { content: part.text },
             };
             break;
 
-          case 'thinking_delta':
+          case 'reasoning-delta':
+            // Claude 等原生支持 reasoning 的模型走这里
             yield {
               event: 'thinking_delta',
-              data: { content: event.content || '' },
+              data: { content: part.text },
             };
             break;
 
-          case 'tool_call_start':
-            toolCallBuffers.set(event.toolCallId!, {
-              name: event.toolCallName || '',
-              argumentsJson: '',
-            });
+          case 'raw':
+            // DeepSeek reasoner 的 reasoning_content 只能从 raw chunk 中提取
+            if (isReasonerModel) {
+              const rawValue = part.rawValue as any;
+              const delta = rawValue?.choices?.[0]?.delta;
+              if (delta?.reasoning_content) {
+                yield {
+                  event: 'thinking_delta',
+                  data: { content: delta.reasoning_content },
+                };
+              }
+            }
+            break;
+
+          case 'tool-call':
             yield {
               event: 'tool_call_start',
               data: {
-                toolCallId: event.toolCallId,
-                toolName: event.toolCallName,
+                toolCallId: part.toolCallId,
+                toolName: part.toolName,
               },
             };
             break;
 
-          case 'tool_call_delta': {
-            const buf = toolCallBuffers.get(event.toolCallId!);
-            if (buf) {
-              buf.argumentsJson += event.argumentsDelta || '';
+          case 'tool-result':
+            yield {
+              event: 'tool_result',
+              data: {
+                toolCallId: part.toolCallId,
+                toolName: part.toolName,
+                result: part.output,
+              },
+            };
+            currentRound++;
+            if (currentRound <= MAX_TOOL_ROUNDS) {
+              yield { event: 'thinking', data: { round: currentRound } };
             }
             break;
-          }
 
-          case 'tool_call_end':
-            // 不需要额外处理，参数已在 delta 中累积
+          case 'error':
+            yield {
+              event: 'error',
+              data: { message: String(part.error) },
+            };
             break;
 
-          case 'done':
-            stopReason = event.stopReason || 'end_turn';
+          default:
+            // start-step, finish-step, text-start, text-end 等事件不需要推送给前端
             break;
         }
       }
-
-      if (stopReason === 'tool_use' && toolCallBuffers.size > 0) {
-        // 构建 toolCalls 数组，过滤掉无效调用
-        const toolCalls = Array.from(toolCallBuffers.entries())
-          .filter(([, buf]) => {
-            if (!buf.name) {
-              this.logger.warn(`过滤掉空名工具调用`);
-              return false;
-            }
-            return true;
-          })
-          .map(([id, buf]) => {
-            let args: Record<string, any> = {};
-            try {
-              args = JSON.parse(buf.argumentsJson);
-            } catch {
-              this.logger.warn(`解析工具参数失败: ${buf.argumentsJson}`);
-            }
-            return { id, name: buf.name, arguments: args };
-          });
-
-        // 如果过滤后没有有效工具调用，直接退出循环
-        if (toolCalls.length === 0) {
-          this.logger.warn(`第 ${round + 1} 轮没有有效工具调用，退出循环`);
-          break;
-        }
-
-        this.logger.log(`第 ${round + 1} 轮执行 ${toolCalls.length} 个工具: ${toolCalls.map(t => t.name).join(', ')}`);
-
-        // 保存 assistant 消息（含 toolCalls）
-        const assistantSeq =
-          await this.sessionService.getNextSeqNum(sessionId);
-        await this.sessionService.saveMessage(sessionId, assistantSeq, {
-          role: 'assistant',
-          content: accumulatedText || undefined,
-          toolCalls,
-        });
-
-        // 追加到上下文
-        messages.push({
-          role: 'assistant',
-          content: accumulatedText || undefined,
-          toolCalls,
-        });
-
-        // 执行每个工具调用
-        for (const toolCall of toolCalls) {
-          const toolResult = await this.toolExecutor.executeTool(
-            userId,
-            toolCall.name,
-            toolCall.arguments,
-          );
-
-          // 保存 tool 消息
-          const toolSeq = await this.sessionService.getNextSeqNum(sessionId);
-          await this.sessionService.saveMessage(sessionId, toolSeq, {
-            role: 'tool',
-            toolCallId: toolCall.id,
-            toolName: toolCall.name,
-            toolResult,
-          });
-
-          // 追加到上下文
-          messages.push({
-            role: 'tool',
-            toolCallId: toolCall.id,
-            toolName: toolCall.name,
-            toolResult,
-          });
-
-          // 通知前端工具执行结果
-          yield {
-            event: 'tool_result',
-            data: {
-              toolCallId: toolCall.id,
-              toolName: toolCall.name,
-              result: toolResult,
-            },
-          };
-        }
-
-        // 继续循环，让 AI 处理工具结果
-        continue;
+    } catch (err: any) {
+      // AbortError 不需要推送错误事件
+      if (err.name !== 'AbortError') {
+        yield {
+          event: 'error',
+          data: { message: err.message || '流式响应失败' },
+        };
       }
-
-      // end_turn 或 max_tokens：保存最终 assistant 消息并退出
-      if (accumulatedText) {
-        const finalSeq = await this.sessionService.getNextSeqNum(sessionId);
-        await this.sessionService.saveMessage(sessionId, finalSeq, {
-          role: 'assistant',
-          content: accumulatedText,
-        });
-      }
-      break;
+      return;
     }
 
-    // 6. 异步后台任务（流式完成后执行，避免竞争 API 速率限制）
+    // 5. 保存完整结果到数据库
+    try {
+      await result.response;
+      await this.saveAgentTrace(sessionId, await result.steps);
+    } catch (err: any) {
+      this.logger.warn(`保存 agent trace 失败: ${err.message}`);
+    }
+
+    // 6. 异步后台任务
     if (isNewSession) {
-      this.generateTitle(sessionId, dto.content, adapter, config).catch(
-        (err) => this.logger.warn(`生成标题失败: ${err.message}`),
+      this.generateTitle(sessionId, dto.content, model).catch((err) =>
+        this.logger.warn(`生成标题失败: ${err.message}`),
       );
     }
-    this.checkAndCompress(userId, sessionId, adapter, config).catch((err) =>
+    this.checkAndCompress(userId, sessionId, model).catch((err) =>
       this.logger.warn(`摘要压缩失败: ${err.message}`),
     );
 
@@ -440,68 +176,110 @@ export class ChatService {
     };
   }
 
+  // ==================== 私有方法 ====================
+
   /**
-   * 获取适配器和配置
-   * @param sessionOrId - 传入 session 对象可避免重复查询
+   * 公共预处理逻辑：会话创建/校验 + 获取模型 + 保存用户消息
    */
-  private async getAdapterAndConfig(
+  private async prepareChat(userId: string, dto: ChatRequestDto) {
+    // 1. 创建或获取会话
+    let sessionId = dto.sessionId;
+    let isNewSession = false;
+    let session: any;
+
+    if (!sessionId) {
+      session = await this.sessionService.createSession(
+        userId,
+        dto.configId,
+      );
+      sessionId = session.id;
+      isNewSession = true;
+    } else {
+      session = await this.sessionService.getSession(userId, sessionId);
+    }
+
+    // 2. 并行: 获取 AI 配置 + 消息序号
+    const [config, userSeqNum] = await Promise.all([
+      this.getModelConfig(userId, dto.configId, session),
+      this.sessionService.getNextSeqNum(sessionId),
+    ]);
+
+    // 3. 创建 AI SDK model 实例
+    const model = this.providerFactory.createModel(config);
+
+    // 4. 构建并保存用户消息
+    const userMessageData: any = {
+      role: 'user',
+      content: dto.content,
+    };
+    const images = dto.imageBase64List?.length
+      ? dto.imageBase64List
+      : dto.imageBase64
+        ? [dto.imageBase64]
+        : [];
+    if (images.length > 0) {
+      userMessageData.imageUrl = JSON.stringify(images);
+    }
+    await this.sessionService.saveMessage(
+      sessionId,
+      userSeqNum,
+      userMessageData,
+    );
+
+    return { sessionId, isNewSession, model, config, session };
+  }
+
+  /**
+   * 获取模型配置
+   */
+  private async getModelConfig(
     userId: string,
     configId: number | undefined,
-    sessionOrId: number | { aiConfigId: number | null },
+    session: { aiConfigId: number | null },
   ) {
     let aiConfig;
 
     if (configId) {
       aiConfig = await this.configService.getFullConfig(userId, configId);
+    } else if (session.aiConfigId) {
+      aiConfig = await this.configService.getFullConfig(
+        userId,
+        session.aiConfigId,
+      );
     } else {
-      // 获取 session（支持直接传入对象或 sessionId）
-      const session =
-        typeof sessionOrId === 'number'
-          ? await this.sessionService.getSession(userId, sessionOrId)
-          : sessionOrId;
-      if (session.aiConfigId) {
-        aiConfig = await this.configService.getFullConfig(
-          userId,
-          session.aiConfigId,
-        );
-      } else {
-        // 使用默认配置
-        aiConfig = await this.configService.findDefault(userId);
-      }
+      aiConfig = await this.configService.findDefault(userId);
     }
 
     if (!aiConfig) {
       throw new BadRequestException('请先配置 AI 模型');
     }
 
-    const adapter = this.adapters.get(aiConfig.provider);
-    if (!adapter) {
-      throw new BadRequestException(
-        `不支持的 AI 服务商: ${aiConfig.provider}`,
-      );
-    }
-
-    return { adapter, config: aiConfig };
+    return aiConfig;
   }
 
   /**
    * 构建上下文消息（system prompt + 摘要 + 历史消息）
-   * @param preloadedSession - 传入已获取的 session 可避免重复查询
+   * 输出 AI SDK v6 的 ModelMessage[] 格式
    */
   private async buildContextMessages(
     userId: string,
     sessionId: number,
     preloadedSession?: any,
-  ): Promise<ChatMessage[]> {
-    const session = preloadedSession || await this.sessionService.getSession(userId, sessionId);
+  ): Promise<ModelMessage[]> {
+    const session =
+      preloadedSession ||
+      (await this.sessionService.getSession(userId, sessionId));
 
     // 并行: 构建 system prompt + 获取上下文消息
     const [systemPrompt, dbMessages] = await Promise.all([
       this.buildSystemPrompt(userId),
-      this.sessionService.getContextMessages(sessionId, session.summaryUpTo),
+      this.sessionService.getContextMessages(
+        sessionId,
+        session.summaryUpTo,
+      ),
     ]);
 
-    const messages: ChatMessage[] = [
+    const messages: ModelMessage[] = [
       { role: 'system', content: systemPrompt },
     ];
 
@@ -513,16 +291,14 @@ export class ChatService {
       });
     }
 
-    // 转换 DB 消息为 ChatMessage 格式
+    // 转换 DB 消息为 ModelMessage 格式
     for (const msg of dbMessages) {
-      const chatMsg: ChatMessage = { role: msg.role as ChatMessage['role'] };
-
       if (msg.role === 'user') {
         if (msg.imageUrl) {
           // 多模态消息（支持多图）
-          const contentBlocks: ContentBlock[] = [];
+          const contentParts: any[] = [];
           if (msg.content) {
-            contentBlocks.push({ type: 'text', text: msg.content });
+            contentParts.push({ type: 'text', text: msg.content });
           }
           // 向后兼容：老数据为纯字符串，新数据为 JSON 数组
           let imageUrls: string[];
@@ -533,51 +309,119 @@ export class ChatService {
             imageUrls = [msg.imageUrl];
           }
           for (const url of imageUrls) {
-            contentBlocks.push({
-              type: 'image',
-              data: url,
-              mediaType: 'image/jpeg',
-            });
+            const dataUrl = url.startsWith('data:')
+              ? url
+              : `data:image/jpeg;base64,${url}`;
+            contentParts.push({ type: 'image', image: dataUrl });
           }
-          chatMsg.content = contentBlocks;
+          messages.push({ role: 'user', content: contentParts });
         } else {
-          chatMsg.content = msg.content || '';
+          messages.push({ role: 'user', content: msg.content || '' });
         }
       } else if (msg.role === 'assistant') {
-        chatMsg.content = msg.content || undefined;
-        if (msg.toolCalls) {
-          chatMsg.toolCalls = msg.toolCalls as any;
+        if (msg.toolCalls && Array.isArray(msg.toolCalls)) {
+          // Assistant 消息包含工具调用
+          const contentParts: any[] = [];
+          if (msg.content) {
+            contentParts.push({ type: 'text', text: msg.content });
+          }
+          for (const tc of msg.toolCalls as any[]) {
+            contentParts.push({
+              type: 'tool-call',
+              toolCallId: tc.id,
+              toolName: tc.name,
+              input: tc.arguments,
+            });
+          }
+          messages.push({ role: 'assistant', content: contentParts });
+        } else {
+          messages.push({
+            role: 'assistant',
+            content: msg.content || '',
+          });
         }
       } else if (msg.role === 'tool') {
-        chatMsg.toolCallId = msg.toolCallId || undefined;
-        chatMsg.toolName = msg.toolName || undefined;
-        chatMsg.toolResult = msg.toolResult;
-      } else {
-        chatMsg.content = msg.content || '';
+        messages.push({
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: msg.toolCallId || '',
+              toolName: msg.toolName || '',
+              output: {
+                type: 'text',
+                value: typeof msg.toolResult === 'string'
+                  ? msg.toolResult
+                  : JSON.stringify(msg.toolResult),
+              },
+            },
+          ],
+        } as any);
       }
-
-      messages.push(chatMsg);
+      // system 消息已在上面处理，跳过
     }
 
     // 裁剪上下文：保留 system 消息，从前面移除旧消息
     if (messages.length > MAX_CONTEXT_MESSAGES) {
       const systemMessages = messages.filter((m) => m.role === 'system');
-      const nonSystemMessages = messages.filter((m) => m.role !== 'system');
-      const trimmed = nonSystemMessages.slice(
-        nonSystemMessages.length - (MAX_CONTEXT_MESSAGES - systemMessages.length),
+      const nonSystemMessages = messages.filter(
+        (m) => m.role !== 'system',
       );
-      messages.length = 0;
-      messages.push(...systemMessages, ...trimmed);
+      const trimmed = nonSystemMessages.slice(
+        nonSystemMessages.length -
+          (MAX_CONTEXT_MESSAGES - systemMessages.length),
+      );
+      return [...systemMessages, ...trimmed];
     }
 
     return messages;
   }
 
   /**
+   * 将 streamText 的步骤结果保存到数据库
+   */
+  private async saveAgentTrace(
+    sessionId: number,
+    steps: any[],
+  ): Promise<void> {
+    for (const step of steps) {
+      // 保存 assistant 消息
+      const assistantSeq =
+        await this.sessionService.getNextSeqNum(sessionId);
+
+      const toolCalls =
+        step.toolCalls?.map((tc: any) => ({
+          id: tc.toolCallId,
+          name: tc.toolName,
+          arguments: tc.input,
+        })) || [];
+
+      await this.sessionService.saveMessage(sessionId, assistantSeq, {
+        role: 'assistant',
+        content: step.text || undefined,
+        toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+      });
+
+      // 保存每个工具结果
+      if (step.toolResults) {
+        for (const tr of step.toolResults) {
+          const toolSeq =
+            await this.sessionService.getNextSeqNum(sessionId);
+          await this.sessionService.saveMessage(sessionId, toolSeq, {
+            role: 'tool',
+            toolCallId: tr.toolCallId,
+            toolName: tr.toolName,
+            toolResult: tr.output,
+          });
+        }
+      }
+    }
+  }
+
+  /**
    * 构建动态 system prompt
    */
   private async buildSystemPrompt(userId: string): Promise<string> {
-    // 获取用户分类
     const categories = await this.categoriesService.findAll(userId);
     const expenseCategories = categories
       .filter((c) => c.type === 'expense')
@@ -587,7 +431,9 @@ export class ChatService {
       .map((c) => c.name);
 
     const today = new Date();
-    const dayOfWeek = ['日', '一', '二', '三', '四', '五', '六'][today.getDay()];
+    const dayOfWeek = ['日', '一', '二', '三', '四', '五', '六'][
+      today.getDay()
+    ];
     const dateStr = today.toISOString().split('T')[0];
 
     return `你是一个智能助手，可以帮助用户记账、查询账单、统计分析，也可以进行日常闲聊和回答问题。
@@ -620,37 +466,24 @@ export class ChatService {
   private async generateTitle(
     sessionId: number,
     firstMessage: string,
-    adapter: AIAdapter,
-    config: any,
+    model: LanguageModel,
   ): Promise<void> {
     try {
-      const response = await adapter.chat(
-        [
-          {
-            role: 'system',
-            content:
-              '根据用户的第一条消息，生成一个简短的对话标题（10字以内）。只返回标题文字，不要加引号或其他标点。',
-          },
-          {
-            role: 'user',
-            content: firstMessage,
-          },
-        ],
-        [], // 不需要工具
-        {
-          apiKey: config.apiKey,
-          apiBaseUrl: config.apiBaseUrl,
-          model: config.model,
-        },
-      );
+      const result = await generateText({
+        model,
+        system:
+          '根据用户的第一条消息，生成一个简短的对话标题（10字以内）。只返回标题文字，不要加引号或其他标点。',
+        prompt: firstMessage,
+        maxOutputTokens: 50,
+      });
 
-      if (response.content) {
+      if (result.text) {
         await this.sessionService.updateTitle(
           sessionId,
-          response.content.trim(),
+          result.text.trim(),
         );
       }
-    } catch (err) {
+    } catch (err: any) {
       this.logger.warn(`生成标题失败: ${err.message}`);
     }
   }
@@ -661,8 +494,7 @@ export class ChatService {
   private async checkAndCompress(
     userId: string,
     sessionId: number,
-    adapter: AIAdapter,
-    config: any,
+    model: LanguageModel,
   ): Promise<void> {
     const unsummarizedCount =
       await this.sessionService.getUnsummarizedCount(sessionId);
@@ -675,7 +507,6 @@ export class ChatService {
       `会话 ${sessionId} 有 ${unsummarizedCount} 条未摘要消息，开始压缩`,
     );
 
-    // 获取需要压缩的消息（保留最近 10 条不压缩）
     const session = await this.sessionService
       .getSession(userId, sessionId)
       .catch(() => null);
@@ -691,7 +522,8 @@ export class ChatService {
 
     // 压缩前面的消息，保留最近 10 条
     const toCompress = allMessages.slice(0, allMessages.length - 10);
-    const lastCompressedSeqNum = toCompress[toCompress.length - 1].seqNum;
+    const lastCompressedSeqNum =
+      toCompress[toCompress.length - 1].seqNum;
 
     // 构建压缩内容
     const compressContent = toCompress
@@ -700,7 +532,9 @@ export class ChatService {
           return `[工具 ${m.toolName}: ${JSON.stringify(m.toolResult).substring(0, 200)}]`;
         }
         const text =
-          typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+          typeof m.content === 'string'
+            ? m.content
+            : JSON.stringify(m.content);
         return `${m.role}: ${text?.substring(0, 300) || '[无文本]'}`;
       })
       .join('\n');
@@ -710,37 +544,25 @@ export class ChatService {
       : '';
 
     try {
-      const response = await adapter.chat(
-        [
-          {
-            role: 'system',
-            content:
-              '请将以下对话内容压缩为一段 200 字以内的摘要。保留关键信息（涉及的金额、日期、操作结果等），去掉不重要的细节。只返回摘要文字。',
-          },
-          {
-            role: 'user',
-            content: `${existingSummary}需要压缩的对话：\n${compressContent}`,
-          },
-        ],
-        [],
-        {
-          apiKey: config.apiKey,
-          apiBaseUrl: config.apiBaseUrl,
-          model: config.model,
-        },
-      );
+      const result = await generateText({
+        model,
+        system:
+          '请将以下对话内容压缩为一段 200 字以内的摘要。保留关键信息（涉及的金额、日期、操作结果等），去掉不重要的细节。只返回摘要文字。',
+        prompt: `${existingSummary}需要压缩的对话：\n${compressContent}`,
+        maxOutputTokens: 500,
+      });
 
-      if (response.content) {
+      if (result.text) {
         await this.sessionService.updateSummary(
           sessionId,
-          response.content.trim(),
+          result.text.trim(),
           lastCompressedSeqNum,
         );
         this.logger.log(
           `会话 ${sessionId} 摘要压缩完成，覆盖到 seqNum=${lastCompressedSeqNum}`,
         );
       }
-    } catch (err) {
+    } catch (err: any) {
       this.logger.warn(`摘要压缩失败: ${err.message}`);
     }
   }

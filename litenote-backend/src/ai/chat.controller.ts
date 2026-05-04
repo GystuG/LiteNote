@@ -7,10 +7,9 @@ import {
   Body,
   Param,
   Query,
+  Req,
   Res,
   ParseIntPipe,
-  HttpException,
-  HttpStatus,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -19,7 +18,7 @@ import {
   ApiBearerAuth,
   ApiQuery,
 } from '@nestjs/swagger';
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import { ChatService } from './services/chat.service';
 import { SessionService } from './services/session.service';
 import { ChatRequestDto, RenameSessionDto } from './dto/chat.dto';
@@ -35,39 +34,12 @@ export class ChatController {
   ) {}
 
   /**
-   * 发送消息
-   */
-  @ApiOperation({
-    summary: '发送聊天消息',
-    description: '发送消息给 AI 助手，支持多轮对话和工具调用',
-  })
-  @ApiResponse({ status: 200, description: '发送成功' })
-  @ApiResponse({ status: 400, description: '请求参数错误' })
-  @Post('send')
-  async sendMessage(
-    @CurrentUser('id') userId: string,
-    @Body() dto: ChatRequestDto,
-  ) {
-    try {
-      const result = await this.chatService.chat(userId, dto);
-      return {
-        success: true,
-        data: result,
-      };
-    } catch (error) {
-      throw new HttpException(
-        { success: false, message: error.message || '发送消息失败' },
-        error.status || HttpStatus.BAD_REQUEST,
-      );
-    }
-  }
-
-  /**
    * 流式发送消息 (SSE)
    */
   @ApiOperation({
     summary: '流式发送聊天消息',
-    description: '通过 SSE 流式返回 AI 响应，支持实时文本输出和工具调用状态',
+    description:
+      '通过 SSE 流式返回 AI 响应，支持实时文本输出和工具调用状态',
   })
   @ApiResponse({ status: 200, description: 'SSE 流' })
   @ApiResponse({ status: 400, description: '请求参数错误' })
@@ -75,6 +47,7 @@ export class ChatController {
   async streamMessage(
     @CurrentUser('id') userId: string,
     @Body() dto: ChatRequestDto,
+    @Req() req: Request,
     @Res() res: Response,
   ) {
     res.setHeader('Content-Type', 'text/event-stream');
@@ -83,14 +56,27 @@ export class ChatController {
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
 
+    // AbortController: 客户端断开时取消 AI 请求，节省 token
+    const abortController = new AbortController();
+    req.on('close', () => abortController.abort());
+
     try {
-      for await (const event of this.chatService.chatStream(userId, dto)) {
-        res.write(`event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`);
+      for await (const event of this.chatService.chatStream(
+        userId,
+        dto,
+        abortController.signal,
+      )) {
+        if (abortController.signal.aborted) break;
+        res.write(
+          `event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`,
+        );
       }
-    } catch (error) {
-      res.write(
-        `event: error\ndata: ${JSON.stringify({ message: error.message || '流式响应失败' })}\n\n`,
-      );
+    } catch (error: any) {
+      if (!abortController.signal.aborted) {
+        res.write(
+          `event: error\ndata: ${JSON.stringify({ message: error.message || '流式响应失败' })}\n\n`,
+        );
+      }
     } finally {
       res.end();
     }
@@ -154,7 +140,6 @@ export class ChatController {
     @Param('id', ParseIntPipe) sessionId: number,
     @Body() dto: RenameSessionDto,
   ) {
-    // 先校验会话归属
     await this.sessionService.getSession(userId, sessionId);
     await this.sessionService.updateTitle(sessionId, dto.title);
     return {

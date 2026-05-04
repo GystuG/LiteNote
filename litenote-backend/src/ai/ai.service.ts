@@ -2,41 +2,25 @@ import {
   Injectable,
   BadRequestException,
   Logger,
-  NotFoundException,
 } from '@nestjs/common';
+import { generateText } from 'ai';
 import { AIConfigService } from './ai-config.service';
+import { AIProviderFactory } from './providers/ai-provider.factory';
 import { ParseBillDto, ParsedBillDto } from './dto/parse-bill.dto';
-import {
-  AIAdapter,
-  ClaudeAdapter,
-  OpenAIAdapter,
-  DeepSeekAdapter,
-  QwenAdapter,
-} from './adapters';
+import { BILL_PARSE_PROMPT, parseAIResponse } from './utils/bill-parser';
 
 /**
  * AI 服务 - 处理账单解析等 AI 功能
+ * 使用 Vercel AI SDK 替代手写 adapter 层
  */
 @Injectable()
 export class AIService {
   private readonly logger = new Logger(AIService.name);
-  private readonly adapters: Map<string, AIAdapter>;
 
   constructor(
     private readonly configService: AIConfigService,
-    private readonly claudeAdapter: ClaudeAdapter,
-    private readonly openaiAdapter: OpenAIAdapter,
-    private readonly deepseekAdapter: DeepSeekAdapter,
-    private readonly qwenAdapter: QwenAdapter,
-  ) {
-    // 注册适配器
-    this.adapters = new Map<string, AIAdapter>([
-      ['claude', this.claudeAdapter],
-      ['openai', this.openaiAdapter],
-      ['deepseek', this.deepseekAdapter],
-      ['qwen', this.qwenAdapter],
-    ]);
-  }
+    private readonly providerFactory: AIProviderFactory,
+  ) {}
 
   /**
    * 解析账单
@@ -61,26 +45,38 @@ export class AIService {
       throw new BadRequestException('当前模型不支持图片识别');
     }
 
-    // 获取适配器
-    const adapter = this.adapters.get(config.provider);
-    if (!adapter) {
-      throw new BadRequestException(`不支持的 AI 服务商: ${config.provider}`);
-    }
-
     try {
       this.logger.log(
         `开始解析账单 - 用户: ${userId}, 模型: ${config.model}, 类型: ${dto.type}`,
       );
 
-      const bills = await adapter.parseBills(dto.content, dto.type, {
-        apiKey: config.apiKey,
-        apiBaseUrl: config.apiBaseUrl,
-        model: config.model,
+      const model = this.providerFactory.createModel(config);
+
+      // 构建消息内容
+      const userContent =
+        dto.type === 'image'
+          ? [
+              { type: 'text' as const, text: BILL_PARSE_PROMPT },
+              {
+                type: 'image' as const,
+                image: dto.content.startsWith('data:')
+                  ? dto.content
+                  : `data:image/jpeg;base64,${dto.content}`,
+              },
+            ]
+          : `${BILL_PARSE_PROMPT}\n${dto.content}`;
+
+      const result = await generateText({
+        model,
+        messages: [{ role: 'user', content: userContent }],
+        maxOutputTokens: 1024,
       });
+
+      const bills = parseAIResponse(result.text);
 
       this.logger.log(`解析完成 - 识别到 ${bills.length} 条账单`);
       return bills;
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(`解析账单失败: ${error.message}`);
       throw new BadRequestException(`账单解析失败: ${error.message}`);
     }
@@ -95,24 +91,21 @@ export class AIService {
   ): Promise<{ success: boolean; message: string }> {
     const config = await this.configService.getFullConfig(userId, configId);
 
-    const adapter = this.adapters.get(config.provider);
-    if (!adapter) {
-      return { success: false, message: `不支持的 AI 服务商: ${config.provider}` };
-    }
-
     try {
-      const success = await adapter.testConnection({
-        apiKey: config.apiKey,
-        apiBaseUrl: config.apiBaseUrl,
-        model: config.model,
+      const model = this.providerFactory.createModel(config);
+
+      await generateText({
+        model,
+        prompt: 'Hello',
+        maxOutputTokens: 10,
       });
 
+      return { success: true, message: '连接成功' };
+    } catch (error: any) {
       return {
-        success,
-        message: success ? '连接成功' : '连接失败，请检查 API Key 和模型名称',
+        success: false,
+        message: `连接测试失败: ${error.message}`,
       };
-    } catch (error) {
-      return { success: false, message: `连接测试失败: ${error.message}` };
     }
   }
 }

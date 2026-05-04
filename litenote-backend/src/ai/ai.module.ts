@@ -9,18 +9,18 @@ import { ChatService } from './services/chat.service';
 import { SessionService } from './services/session.service';
 import { ToolExecutorService } from './services/tool-executor.service';
 import { AsrService } from './services/asr.service';
-import {
-  ClaudeAdapter,
-  OpenAIAdapter,
-  DeepSeekAdapter,
-  QwenAdapter,
-} from './adapters';
+import { AIProviderFactory } from './providers/ai-provider.factory';
 import { BillsModule } from '../bills/bills.module';
 import { CategoriesModule } from '../categories/categories.module';
 
 @Module({
   imports: [BillsModule, CategoriesModule],
-  controllers: [AIController, AIConfigController, ChatController, AsrController],
+  controllers: [
+    AIController,
+    AIConfigController,
+    ChatController,
+    AsrController,
+  ],
   providers: [
     AIService,
     AIConfigService,
@@ -28,10 +28,7 @@ import { CategoriesModule } from '../categories/categories.module';
     SessionService,
     ToolExecutorService,
     AsrService,
-    ClaudeAdapter,
-    OpenAIAdapter,
-    DeepSeekAdapter,
-    QwenAdapter,
+    AIProviderFactory,
   ],
   exports: [AIService, AIConfigService],
 })

@@ -64,29 +64,3 @@ export class RenameSessionDto {
   title: string;
 }
 
-/**
- * 工具执行结果
- */
-export class ToolResultDto {
-  toolCallId: string;
-  toolName: string;
-  result: {
-    success: boolean;
-    data: any;
-    message: string;
-  };
-}
-
-/**
- * 聊天响应 DTO
- */
-export class ChatResponseDto {
-  @ApiProperty({ description: '会话ID' })
-  sessionId: number;
-
-  @ApiProperty({ description: 'AI文本回复' })
-  content: string;
-
-  @ApiProperty({ description: '工具执行结果', type: [ToolResultDto] })
-  toolResults: ToolResultDto[];
-}
